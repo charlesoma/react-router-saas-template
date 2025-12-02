@@ -23,66 +23,100 @@ The dashboard as implemented today conceptually works with:
 - **Users/Recruiters** who belong to that organization
 - **Calendar events** that are displayed in the main calendar and Daily Agenda
 
-To support this, we would introduce at least the following tables:
+Because this codebase uses **Prisma**, these concepts should be modeled as Prisma models instead of raw SQL tables.
 
-#### `organizations`
+#### `Organization`
 
-```sql
-organizations (
-  id               uuid primary key,
-  slug             text unique not null,
-  name             text not null,
-  created_at       timestamptz not null default now()
-);
+```prisma
+model Organization {
+  id        String  @id @default(cuid())
+  slug      String  @unique
+  name      String
+
+  users     User[]
+  events    CalendarEvent[]
+
+  createdAt DateTime @default(now())
+}
 ```
 
-#### `users`
+#### `User`
 
-```sql
-users (
-  id               uuid primary key,
-  organization_id  uuid not null references organizations(id),
-  email            text not null unique,
-  name             text,
-  timezone         text,               -- e.g. "Europe/Berlin", optional
-  created_at       timestamptz not null default now()
-);
+```prisma
+model User {
+  id             String        @id @default(cuid())
+  organizationId String
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  email          String        @unique
+  name           String?
+  timezone       String?       // e.g. "Europe/Berlin"
+
+  createdAt      DateTime      @default(now())
+  createdEvents  CalendarEvent[] @relation("CreatedEvents")
+}
 ```
 
-#### `calendar_events`
+#### `CalendarEvent`
 
 Rather than storing just an hour range (like the current mock), we store full timestamps in UTC:
 
-```sql
-calendar_events (
-  id               uuid primary key,
-  organization_id  uuid not null references organizations(id),
+```prisma
+model CalendarEvent {
+  id             String       @id @default(cuid())
 
-  title            text not null,
-  description      text,
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
-  start_at         timestamptz not null,
-  end_at           timestamptz not null,
+  title          String
+  description    String?
 
-  source           text,    -- e.g. 'ats', 'calendar', 'ai_suggestion'
-  importance       text,    -- e.g. 'low' | 'medium' | 'high'
-  status           text,    -- e.g. 'scheduled' | 'completed' | 'cancelled'
+  startAt        DateTime     // stored in UTC
+  endAt          DateTime     // stored in UTC
 
-  metadata         jsonb,   -- candidate id, job id, etc.
+  source         String?      // e.g. "ats", "calendar", "ai_suggestion"
+  importance     String?      // e.g. "low" | "medium" | "high"
+  status         String?      // e.g. "scheduled" | "completed" | "cancelled"
 
-  created_by       uuid references users(id),
-  created_at       timestamptz not null default now(),
-  updated_at       timestamptz not null default now()
-);
+  metadata       Json?        // candidate id, job id, etc.
+
+  createdById    String?
+  createdBy      User?        @relation("CreatedEvents", fields: [createdById], references: [id])
+
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+}
 ```
 
 Key points:
 
-- **`start_at`/`end_at` are in UTC**. We compute local dates/hours for the UI in the loader.
+- **`startAt`/`endAt` are stored as `DateTime` in UTC**. We compute local dates/hours for the UI in the loader.
 - `metadata` can link the event to candidates, jobs, or ATS data without coupling the UI to a specific schema.
 - Fields like `importance` and `status` are available for future filtering and styling (e.g. urgent vs. normal events).
 
-> If we later need **availability slots** (distinct from actual events), we would add a separate `availability_slots` table. For this dashboard feature, a single `calendar_events` table is enough.
+> If we later need **availability slots** (distinct from actual events), we would add a separate `AvailabilitySlot` model. For this dashboard feature, a single `CalendarEvent` model is enough.
+
+### 1.2 Indexing and query performance
+
+In a real production system, the overlap query shown later (_events that intersect a given day_) must be backed by proper indexes, otherwise it will degrade as the number of events grows.
+
+At a minimum, you would want a composite index scoped by organization and time:
+
+```prisma
+model CalendarEvent {
+  // ...other fields omitted for brevity
+
+  @@index([organizationId, startAt])
+  @@index([organizationId, endAt])
+}
+```
+
+Depending on your database and query patterns, you might instead use a single composite index such as `@@index([organizationId, startAt, endAt])` or a partial/indexed view dedicated to the overlap query. The important part is that:
+
+- Queries always include `organizationId` in the `WHERE` clause.
+- `startAt` / `endAt` are indexed so range scans (`start_at < :end` AND `end_at > :start`) do not require a full table scan.
+
+For very large multi-tenant deployments, you may also consider **table partitioning** by organization or by time window (e.g. monthly partitions) to keep index sizes manageable.
 
 ---
 
@@ -144,6 +178,35 @@ export async function getEventsForDay(opts: {
 Helper functions `startOfLocalDay` and `endOfLocalDay` can be implemented using `date-fns-tz`, Luxon, or another timezone-aware library.
 
 > This function returns **all events that overlap the day**, including events that start before midnight or end after midnight.
+
+---
+
+### 2.3 Pagination and date-range windowing
+
+Even though the current dashboard only shows a **single day at a time**, a real system should still consider how to paginate / window data so that queries remain efficient as the number of events grows.
+
+Common strategies:
+
+- **Day-by-day loading (what the UI does today):**
+  - The loader (or service) requests only the events that intersect the currently selected date.
+  - Navigating to the previous/next day simply changes the date parameter and re-runs the same bounded query.
+  - This naturally "paginates" by day without needing an explicit `LIMIT/OFFSET`.
+
+- **Date-range windows:**
+  - For week or month views, query a wider window, e.g. `[startOfWeek, endOfWeek]` or `[startOfMonth, endOfMonth]`.
+  - You still keep `organizationId`, `startAt`, and `endAt` in the `WHERE` clause, and reuse the same indexes.
+
+- **Cursor-based pagination for long lists:**
+  - If you later expose a chronological list view of events (e.g. activity feed), paginate by `(startAt, id)` using cursor-based pagination instead of `OFFSET`.
+  - For example: `WHERE startAt > :cursorStartAt OR (startAt = :cursorStartAt AND id > :cursorId)`.
+
+In all cases, the key idea is that the UI should **never request an unbounded set of events**. It should always specify either:
+
+- A concrete day, or
+- A bounded date range (week/month), or
+- A small page size with a cursor.
+
+The mocked dashboard already follows this principle by focusing on a single `selectedDate`. The production implementation would keep that contract and simply back it with efficient indexed queries.
 
 ---
 
@@ -315,6 +378,14 @@ When using real data:
 - `startHour` and `endHour` simply come from transforming `start_at`/`end_at` in the loader.
 - `date` is derived from the local start date of each event.
 - The front-end event selection and display logic does **not** need to change.
+
+In the current mocked implementation we assume there are at most a small number of overlapping events, so they can safely stack in the same horizontal lane. For a production calendar with heavy overlap you would typically:
+
+- Group events by overlapping ranges for a given day.
+- Assign each event a **lane index** within its group (e.g. 0, 1, 2...).
+- Compute a `width` and `left` percentage per lane (e.g. 3 lanes → ~33% width each, with horizontal offsets).
+
+This produces a familiar multi-column layout where overlapping events are shown side-by-side instead of on top of each other. The existing absolute-positioning approach in `dashboard.tsx` (using `top`/`height` based on hours) can be extended with these lane calculations without changing the core event model or loader contract.
 
 ### 4.2 Daily Agenda
 
