@@ -52,6 +52,57 @@ export default {
   dashboard: {
     breadcrumb: "Dashboard",
     pageTitle: "Dashboard",
+    ui: {
+      aiAssistant: {
+        actions: {
+          moveToNextStage: "Move to Next Stage",
+          scheduleInterview: "Schedule Interview",
+          sendToMarketplace: "Send To Marketplace",
+          summarize: "Summarize",
+        },
+        contextualActionsTitle: "Contextual Actions:",
+        greeting: "Hello! I'm your AI Assistant. How can I help you today?",
+        inputPlaceholder: "Ask me anything...",
+        reply:
+          "I've filtered the pipeline for Senior Software Engineer candidates. Alice Johnson is currently in the 'Applied' stage. Would you like me to summarize her profile?",
+        title: "AI Assistant",
+        userExample:
+          "Show me candidates for the Senior Software Engineer role.",
+      },
+      calendar: {
+        selectedSlotLabel: "Selected slot:",
+        slotLabel: "Time slot {{time}}",
+        timeLabel: "Time:",
+        today: "Today",
+      },
+      dailyAgenda: {
+        empty: "No events scheduled for this day.",
+        markDoneLabel: 'Mark "{{title}}" as done',
+        title: "Daily Agenda",
+      },
+      hiringGoals: {
+        progressHint: "On track to hit headcount plan for Q4.",
+        rolesFilledLabel: "Roles filled",
+        rolesFilledValue: "8 / 12",
+        subtitle: "This month",
+        title: "Hiring Goals",
+      },
+      pipelineTrends: {
+        conversionHint:
+          "Conversion from screen to onsite is up 12% vs last week.",
+        interviewsScheduledLabel: "Interviews scheduled",
+        interviewsScheduledValue: "8",
+        qualifiedCandidatesLabel: "Qualified candidates",
+        qualifiedCandidatesValue: "24",
+        subtitle: "This week",
+        title: "Pipeline Trends",
+      },
+      urgentFunnel: {
+        priorityHigh: "High",
+        sendReminder: "Send Reminder",
+        title: "Urgent Funnel Updates",
+      },
+    },
   },
   getHelp: {
     breadcrumb: "Get Help",

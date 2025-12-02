@@ -22,6 +22,7 @@ const buttonVariants = cva(
         sm: "h-8 rounded-md gap-1.5 px-3 has-[>svg]:px-2.5",
       },
       variant: {
+        calendar: "bg-transparent text-inherit",
         default: "bg-primary text-primary-foreground hover:bg-primary/90",
         destructive:
           "text-destructive hover:text-foreground bg-secondary border border-border hover:text-white hover:bg-destructive/90 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40 dark:hover:bg-destructive/60",
